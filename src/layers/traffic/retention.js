@@ -54,6 +54,7 @@ export function createRetention({ state, parts }) {
     let budget = DOT_CHANGE_BUDGET;
     let pending = false;
     const now = Date.now();
+    const roadOnlyLive = state._liveMode && state._liveFlowOnly;
     // Removing a road or reducing density fades only surplus dots. A retained
     // dot never changes road, direction, segment or progress.
     for (const record of records.values()) {
@@ -108,7 +109,10 @@ export function createRetention({ state, parts }) {
       }
       if (active !== record.target || record.dots.length !== active)
         pending = true;
-      if (!record.target && !record.dots.length)
+      // Live TomTom mode intentionally keeps geometry records even with a zero
+      // synthetic-dot target: the static road-flow renderer still needs their
+      // sampled waypoints and source.flow references.
+      if (!record.target && !record.dots.length && !roadOnlyLive)
         records.delete(record.road.key);
     }
     refreshCounts();
@@ -175,11 +179,17 @@ export function createRetention({ state, parts }) {
       if (record.wanted) wanted.push(record.road);
       else record.target = 0;
     }
-    const budgets = parts.model.allocateRoadDotBudgets(
-      wanted,
-      altitude,
-      roadDotBudget(altitude),
-    );
+    // A TomTom flow tile describes conditions on a road, not GPS positions of
+    // individual cars. The fork's live-flow-only presentation keeps the road
+    // geometry but deliberately allocates zero synthetic moving vehicles.
+    const budgets =
+      state._liveMode && state._liveFlowOnly
+        ? wanted.map(() => 0)
+        : parts.model.allocateRoadDotBudgets(
+            wanted,
+            altitude,
+            roadDotBudget(altitude),
+          );
     for (let i = 0; i < wanted.length; i++)
       records.get(wanted[i].key).target = budgets[i];
     state._roads = wanted;
