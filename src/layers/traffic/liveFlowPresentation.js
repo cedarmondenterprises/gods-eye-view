@@ -27,7 +27,7 @@ function roadLength(road) {
   return Array.isArray(road?.waypoints) ? road.waypoints.length : 0;
 }
 
-function summarizeRoads(roads) {
+export function summarizeRoads(roads) {
   const buckets = { free: 0, slow: 0, jam: 0, sim: 0 };
   let eligible = 0;
   let matched = 0;
@@ -66,13 +66,10 @@ function summarizeRoads(roads) {
  */
 export function installLiveFlowPresentation({ state, services, parts }) {
   state._liveFlowOnly = true;
-  state._uncoveredMode = 'hide';
-  state._jamViz = 'heatline';
   state._liveFlowPrimitives = { free: null, slow: null, jam: null };
   state._liveFlowLineCount = 0;
   state._liveFlowLineSupported = null;
 
-  const originalRenderRoads = parts.rendering.renderRoadsForAltitude;
   const originalRebuildHeatLines = parts.rendering.rebuildHeatLines;
   const originalRemoveHeatLines = parts.rendering.removeHeatLines;
   const originalRecolorDots = parts.model.recolorDotsInPlace;
@@ -189,20 +186,6 @@ export function installLiveFlowPresentation({ state, services, parts }) {
   parts.rendering.rebuildHeatLines = function rebuildTrafficLines(roads) {
     if (state._liveMode && state._liveFlowOnly) rebuildLiveFlowLines(roads);
     else originalRebuildHeatLines(roads);
-  };
-
-  parts.rendering.renderRoadsForAltitude = function renderRoadsWithoutLiveCars(
-    ...args
-  ) {
-    const result = originalRenderRoads(...args);
-    if (state._liveMode && state._liveFlowOnly) {
-      const roads = parts.rendering.visibleRoadsForAltitude(
-        state._roads,
-        state._lastRenderAltitude,
-      );
-      rebuildLiveFlowLines(roads);
-    }
-    return result;
   };
 
   parts.model.recolorDotsInPlace = function recolorOrRefreshLiveFlow(label) {
