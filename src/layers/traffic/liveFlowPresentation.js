@@ -1,7 +1,9 @@
 import * as Cesium from 'cesium';
 import { flowBucket } from '../../data/trafficFlowStyle.js';
 
-const LIVE_FLOW_LINE_CAP = 600;
+const DESKTOP_FLOW_LINE_CAP = 600;
+const MOBILE_FLOW_LINE_CAP = 320;
+const MID_FLOW_LINE_CAP = 450;
 const LIVE_FLOW_WIDTH = {
   free: 3,
   slow: 4,
@@ -14,6 +16,38 @@ const LIVE_FLOW_ALPHA = {
 };
 const BUCKET_PRIORITY = { jam: 0, slow: 1, free: 2 };
 
+function finitePositive(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : fallback;
+}
+
+/** Bound static traffic geometry according to the display/device budget. */
+export function resolveLiveFlowLineCap({
+  width = Infinity,
+  coarsePointer = false,
+  deviceMemory = Infinity,
+} = {}) {
+  const viewportWidth = finitePositive(width, Infinity);
+  const memory = finitePositive(deviceMemory, Infinity);
+  if (coarsePointer || viewportWidth <= 720 || memory <= 4)
+    return MOBILE_FLOW_LINE_CAP;
+  if (viewportWidth <= 1100 || memory <= 8) return MID_FLOW_LINE_CAP;
+  return DESKTOP_FLOW_LINE_CAP;
+}
+
+function runtimeLiveFlowLineCap() {
+  const windowRef = globalThis.window;
+  const navigatorRef = globalThis.navigator;
+  return resolveLiveFlowLineCap({
+    width: windowRef?.innerWidth,
+    coarsePointer: Boolean(
+      windowRef?.matchMedia?.('(pointer: coarse)')?.matches ||
+        Number(navigatorRef?.maxTouchPoints) > 0,
+    ),
+    deviceMemory: navigatorRef?.deviceMemory,
+  });
+}
+
 function roadFlow(road) {
   return road?.source ? road.source.flow : road?.flow;
 }
@@ -25,6 +59,34 @@ function roadLength(road) {
       0,
     );
   return Array.isArray(road?.waypoints) ? road.waypoints.length : 0;
+}
+
+function positionSignature(point) {
+  if (!point) return '0,0,0';
+  return `${Math.round(point.x || 0)},${Math.round(point.y || 0)},${Math.round(point.z || 0)}`;
+}
+
+function activeColorSignature(state) {
+  return ['free', 'slow', 'jam']
+    .map((bucket) => {
+      const color = state._activeBucketColors?.[bucket];
+      if (!color) return bucket;
+      return `${bucket}:${color.red?.toFixed?.(3)},${color.green?.toFixed?.(3)},${color.blue?.toFixed?.(3)},${color.alpha?.toFixed?.(3)}`;
+    })
+    .join('|');
+}
+
+function candidateSignature(candidates, state) {
+  const roads = candidates
+    .map(({ road, bucket }) => {
+      const points = road.waypoints || [];
+      const first = points[0];
+      const middle = points[Math.floor(points.length / 2)];
+      const last = points.at(-1);
+      return `${road.key || ''}:${bucket}:${points.length}:${positionSignature(first)}:${positionSignature(middle)}:${positionSignature(last)}`;
+    })
+    .join(';');
+  return `${state._stylePreset || 'normal'}|${activeColorSignature(state)}|${roads}`;
 }
 
 export function summarizeRoads(roads) {
@@ -69,6 +131,9 @@ export function installLiveFlowPresentation({ state, services, parts }) {
   state._liveFlowPrimitives = { free: null, slow: null, jam: null };
   state._liveFlowLineCount = 0;
   state._liveFlowLineSupported = null;
+  state._liveFlowSignature = null;
+  state._liveFlowLineCap = runtimeLiveFlowLineCap();
+  state._liveFlowAnimationSuspended = false;
 
   const originalRebuildHeatLines = parts.rendering.rebuildHeatLines;
   const originalRemoveHeatLines = parts.rendering.removeHeatLines;
@@ -77,7 +142,30 @@ export function installLiveFlowPresentation({ state, services, parts }) {
   const originalGetDetectableObjects =
     parts.controls.methods.getDetectableObjects;
 
-  function removeLiveFlowLines() {
+  function suspendSyntheticAnimation() {
+    if (!state._liveMode || !state._liveFlowOnly || state._enabled === false)
+      return;
+    if (state._preRenderRemover) {
+      state._preRenderRemover();
+      state._preRenderRemover = null;
+    }
+    services.render?.releaseContinuousRender?.('traffic');
+    state._liveFlowAnimationSuspended = true;
+    services.render?.governorRequestRender?.('traffic-live-flow');
+  }
+
+  function ensureSyntheticAnimation() {
+    if (state._liveMode || !state._enabled || !state._viewer?.scene?.preRender)
+      return;
+    services.render?.holdContinuousRender?.('traffic');
+    if (!state._preRenderRemover)
+      state._preRenderRemover = state._viewer.scene.preRender.addEventListener(
+        parts.animation.animate,
+      );
+    state._liveFlowAnimationSuspended = false;
+  }
+
+  function removeLiveFlowLines({ clearSignature = true } = {}) {
     const primitives = state._viewer?.scene?.groundPrimitives;
     if (primitives) {
       for (const bucket of ['free', 'slow', 'jam']) {
@@ -87,6 +175,7 @@ export function installLiveFlowPresentation({ state, services, parts }) {
     }
     state._liveFlowPrimitives = { free: null, slow: null, jam: null };
     state._liveFlowLineCount = 0;
+    if (clearSignature) state._liveFlowSignature = null;
   }
 
   function liveCandidates(roads) {
@@ -107,10 +196,6 @@ export function installLiveFlowPresentation({ state, services, parts }) {
   }
 
   function rebuildLiveFlowLines(roads) {
-    removeLiveFlowLines();
-    originalRemoveHeatLines();
-    services.credits?.hideOsmCredit?.(state._viewer, 'traffic');
-
     if (!state._liveMode || !state._viewer) return;
     const groundPrimitives = state._viewer.scene?.groundPrimitives;
     if (!groundPrimitives) return;
@@ -127,7 +212,18 @@ export function installLiveFlowPresentation({ state, services, parts }) {
     if (!state._liveFlowLineSupported) return;
 
     const allCandidates = liveCandidates(roads);
-    const candidates = allCandidates.slice(0, LIVE_FLOW_LINE_CAP);
+    const lineCap = state._liveFlowLineCap || DESKTOP_FLOW_LINE_CAP;
+    const candidates = allCandidates.slice(0, lineCap);
+    const signature = candidateSignature(candidates, state);
+    if (signature === state._liveFlowSignature) {
+      suspendSyntheticAnimation();
+      return;
+    }
+
+    removeLiveFlowLines({ clearSignature: false });
+    originalRemoveHeatLines();
+    services.credits?.hideOsmCredit?.(state._viewer, 'traffic');
+
     const byBucket = { free: [], slow: [], jam: [] };
     for (const candidate of candidates)
       byBucket[candidate.bucket].push(candidate);
@@ -164,6 +260,7 @@ export function installLiveFlowPresentation({ state, services, parts }) {
       state._liveFlowPrimitives[bucket] = primitive;
     }
 
+    state._liveFlowSignature = signature;
     state._liveFlowLineCount = candidates.length;
     state._heatLineCount = candidates.length;
 
@@ -172,10 +269,12 @@ export function installLiveFlowPresentation({ state, services, parts }) {
         openMapTiles: true,
       });
 
-    if (allCandidates.length > LIVE_FLOW_LINE_CAP)
+    if (allCandidates.length > lineCap)
       console.log(
-        `[Data:Traffic] Live flow corridors capped at ${LIVE_FLOW_LINE_CAP} for mobile performance`,
+        `[Data:Traffic] Live flow corridors capped at ${lineCap} for this device`,
       );
+
+    suspendSyntheticAnimation();
   }
 
   parts.rendering.removeHeatLines = function removeAllTrafficLines() {
@@ -197,6 +296,7 @@ export function installLiveFlowPresentation({ state, services, parts }) {
       rebuildLiveFlowLines(roads);
       return;
     }
+    ensureSyntheticAnimation();
     originalRecolorDots(label);
   };
 
@@ -219,6 +319,8 @@ export function installLiveFlowPresentation({ state, services, parts }) {
     stats.heatLines = state._liveFlowLineCount;
     stats.liveFlowRoads = summary.matched;
     stats.syntheticVehiclesHidden = true;
+    stats.staticFlow = true;
+    stats.flowLineCap = state._liveFlowLineCap;
 
     if (state._flowError) {
       const reason = String(state._flowError).replace(
