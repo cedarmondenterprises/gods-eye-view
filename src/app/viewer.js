@@ -1,5 +1,6 @@
 import * as Cesium from 'cesium';
 import { applyModelAtmosphereWorkaround } from './atmosphereCompat.js';
+import { detectViewerPerformanceProfile } from './mobilePerformance.js';
 
 const PINCH_ZOOM_MULTIPLIER = 8;
 const MAX_PINCH_PIXEL_DELTA = 120;
@@ -106,6 +107,8 @@ export function installTrackpadPinchZoom(
 export function createApplicationViewer({ container, creditContainer }) {
   if (!container || !creditContainer)
     throw new TypeError('Viewer and credit containers are required');
+
+  const performanceProfile = detectViewerPerformanceProfile();
   const viewer = new Cesium.Viewer(container, {
     timeline: false,
     animation: false,
@@ -120,11 +123,19 @@ export function createApplicationViewer({ container, creditContainer }) {
     infoBox: false,
     baseLayer: false,
     creditContainer,
-    msaaSamples: 4,
+    msaaSamples: performanceProfile.msaaSamples,
     contextOptions: { webgl: { preserveDrawingBuffer: true } },
   });
   try {
-    viewer.targetFrameRate = 60;
+    viewer.targetFrameRate = performanceProfile.targetFrameRate;
+    viewer.resolutionScale = performanceProfile.resolutionScale;
+    if (typeof document !== 'undefined')
+      document.documentElement.dataset.gevPerformanceProfile =
+        performanceProfile.name;
+    console.info(
+      `[Perf] Viewer profile ${performanceProfile.name}: ${performanceProfile.targetFrameRate} fps, MSAA ${performanceProfile.msaaSamples}x, resolution ${performanceProfile.resolutionScale.toFixed(2)}x`,
+    );
+
     // Before any tile builds a draw command: Cesium's per-vertex model
     // atmosphere fails to LINK on Apple's Metal backend and kills the
     // render loop. See app/atmosphereCompat.js.

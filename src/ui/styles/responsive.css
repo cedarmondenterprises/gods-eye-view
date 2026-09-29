@@ -70,12 +70,12 @@
     right: 16px;
     transform: none;
     max-width: none;
-    bottom: 120px;
+    bottom: max(120px, calc(env(safe-area-inset-bottom) + 104px));
   }
 
   #gev-voice-control {
     right: 16px;
-    bottom: 16px;
+    bottom: max(16px, env(safe-area-inset-bottom));
     min-width: 196px;
   }
 
@@ -184,28 +184,32 @@
     top: calc(50vh + 8px);
     right: 16px;
     /* The rail goes edge-to-edge at this width, so its floor is what decides
-       whether the required Google/Cesium credit line survives. The credit's
-       top edge sits at calc(2vh + 5rem) plus its own 28px, so a flat 100px
-       floor cut into it at EVERY viewport height — the DISPLAY toggles were
-       drawn straight over the notice. Track the credit's own anchor instead
-       and the 12px of clear air holds regardless of height; the rail already
-       scrolls (overflow-y below), so it loses reach, not content. */
-    bottom: calc(2vh + 7.5rem);
+       whether the required Google/Cesium credit line survives. */
+    bottom: max(
+      calc(2vh + 7.5rem),
+      calc(env(safe-area-inset-bottom) + 7rem)
+    );
     left: 16px;
     width: auto;
     max-height: none;
     overflow-y: auto;
   }
 
+  #left-panel-stack,
+  #right-context-rail {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+  }
+
+  #left-panel-stack::-webkit-scrollbar,
+  #right-context-rail::-webkit-scrollbar {
+    display: none;
+  }
+
   /* Both stacks are scroll containers at this width (overflow-y above), which
-     also makes their overflow-x compute to auto. Each panel's decorative
-     .panel-glow is absolutely positioned with a negative inset (-18px/-20px),
-     so inside a scroll container it stops being harmless paint and becomes
-     18–20px of scrollable overflow on BOTH axes: a horizontal scrollbar band
-     under the expanded panel plus a vertical scrollbar that scrolls nothing
-     but glow. Pin the glow to the panel box here — its blur is ink overflow,
-     which never scrolls — instead of clipping the rail, which would also clip
-     legitimate content such as the Context radio popover. */
+     also makes their overflow-x compute to auto. Pin decorative glow to the
+     panel box so it cannot create fake scrollable overflow. */
   #left-panel-stack .panel-glow,
   #right-context-rail .panel-glow {
     inset: 0;
@@ -226,6 +230,7 @@
   #right-context-rail #global-context-panel.collapsed {
     width: 100%;
   }
+
   .context-radio-mini {
     right: -38px;
     width: min(244px, calc(100vw - 32px));
@@ -251,6 +256,31 @@
     top: 16px;
     max-width: calc(100vw - 24px);
     text-align: center;
+  }
+
+  /* Dynamic viewport units follow Android browser chrome as it expands and
+     collapses, avoiding the clipped/overscrolled 100vh layout. */
+  html,
+  body,
+  #cesiumContainer {
+    height: 100dvh;
+    min-height: 100dvh;
+  }
+
+  /* Large backdrop blurs are expensive over a continuously changing WebGL
+     scene. Mobile keeps the glass treatment while cutting that compositing
+     cost substantially. */
+  #data-panel,
+  #scene-panel,
+  #cctv-panel,
+  #global-context-panel,
+  #recent-imagery-panel,
+  #radio-panel,
+  #pp-toggles,
+  #location-bar,
+  #gev-voice-control {
+    backdrop-filter: blur(10px) saturate(1.15);
+    -webkit-backdrop-filter: blur(10px) saturate(1.15);
   }
 }
 

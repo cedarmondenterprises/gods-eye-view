@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   installLiveFlowPresentation,
+  resolveLiveFlowLineCap,
   summarizeRoads,
 } from './liveFlowPresentation.js';
 
@@ -26,6 +27,20 @@ test('live road-flow summary counts matched roads without inventing vehicles', (
   assert.equal(summary.coveragePct, 75);
 });
 
+test('live flow geometry budget is smaller on touch and constrained devices', () => {
+  assert.equal(resolveLiveFlowLineCap({ width: 1440, deviceMemory: 16 }), 600);
+  assert.equal(resolveLiveFlowLineCap({ width: 900, deviceMemory: 8 }), 450);
+  assert.equal(resolveLiveFlowLineCap({ width: 390, deviceMemory: 8 }), 320);
+  assert.equal(
+    resolveLiveFlowLineCap({
+      width: 1440,
+      coarsePointer: true,
+      deviceMemory: 16,
+    }),
+    320,
+  );
+});
+
 test('installer preserves traffic preferences and suppresses synthetic live contacts', () => {
   const state = {
     _uncoveredMode: 'sim',
@@ -41,6 +56,9 @@ test('installer preserves traffic preferences and suppresses synthetic live cont
       removeHeatLines() {},
       rebuildHeatLines() {},
       visibleRoadsForAltitude: (roads) => roads,
+    },
+    animation: {
+      animate() {},
     },
     model: {
       recolorDotsInPlace() {},
@@ -58,7 +76,11 @@ test('installer preserves traffic preferences and suppresses synthetic live cont
     },
   };
 
-  installLiveFlowPresentation({ state, services: { credits: {} }, parts });
+  installLiveFlowPresentation({
+    state,
+    services: { credits: {}, render: {} },
+    parts,
+  });
 
   assert.equal(state._uncoveredMode, 'sim');
   assert.equal(state._jamViz, 'density');
@@ -68,5 +90,6 @@ test('installer preserves traffic preferences and suppresses synthetic live cont
   assert.equal(stats.count, 1);
   assert.equal(stats.flowCoveragePct, 100);
   assert.equal(stats.syntheticVehiclesHidden, true);
+  assert.equal(stats.staticFlow, true);
   assert.match(stats.loadingLabel, /Road flow only/);
 });
