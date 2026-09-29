@@ -9,7 +9,6 @@ test('desktop keeps the full quality viewer profile', () => {
       coarsePointer: false,
       deviceMemory: 16,
       hardwareConcurrency: 12,
-      devicePixelRatio: 2,
     }),
     {
       name: 'desktop',
@@ -22,18 +21,17 @@ test('desktop keeps the full quality viewer profile', () => {
   );
 });
 
-test('phone profile lowers frame rate, MSAA and high-DPR render cost', () => {
+test('phone profile lowers frame rate, MSAA and render resolution modestly', () => {
   const profile = chooseViewerPerformanceProfile({
     width: 412,
     coarsePointer: true,
     deviceMemory: 8,
     hardwareConcurrency: 8,
-    devicePixelRatio: 3,
   });
   assert.equal(profile.name, 'mobile');
   assert.equal(profile.targetFrameRate, 45);
   assert.equal(profile.msaaSamples, 2);
-  assert.equal(profile.resolutionScale, 0.55);
+  assert.equal(profile.resolutionScale, 0.85);
 });
 
 test('constrained phone selects the battery-friendly profile', () => {
@@ -42,10 +40,9 @@ test('constrained phone selects the battery-friendly profile', () => {
     coarsePointer: true,
     deviceMemory: 4,
     hardwareConcurrency: 4,
-    devicePixelRatio: 2,
   });
   assert.equal(profile.name, 'mobile-lite');
   assert.equal(profile.targetFrameRate, 30);
   assert.equal(profile.msaaSamples, 1);
-  assert.equal(profile.resolutionScale, 0.625);
+  assert.equal(profile.resolutionScale, 0.7);
 });
