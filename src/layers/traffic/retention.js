@@ -109,10 +109,15 @@ export function createRetention({ state, parts }) {
       }
       if (active !== record.target || record.dots.length !== active)
         pending = true;
-      // Live TomTom mode intentionally keeps geometry records even with a zero
-      // synthetic-dot target: the static road-flow renderer still needs their
-      // sampled waypoints and source.flow references.
-      if (!record.target && !record.dots.length && !roadOnlyLive)
+      // Live TomTom mode intentionally keeps wanted geometry records even with
+      // a zero synthetic-dot target: the static road-flow renderer still needs
+      // their sampled waypoints and source.flow references. Old viewport roads
+      // are still discarded normally.
+      if (
+        !record.target &&
+        !record.dots.length &&
+        (!roadOnlyLive || !record.wanted)
+      )
         records.delete(record.road.key);
     }
     refreshCounts();
