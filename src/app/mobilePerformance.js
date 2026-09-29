@@ -49,7 +49,7 @@ export function detectViewerPerformanceProfile({
 } = {}) {
   const coarsePointer = Boolean(
     windowRef?.matchMedia?.('(pointer: coarse)')?.matches ||
-      Number(navigatorRef?.maxTouchPoints) > 0,
+    Number(navigatorRef?.maxTouchPoints) > 0,
   );
   return chooseViewerPerformanceProfile({
     width: windowRef?.innerWidth,
