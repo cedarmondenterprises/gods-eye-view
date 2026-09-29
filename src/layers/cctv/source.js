@@ -3,10 +3,12 @@ import {
   FRAME_ENDPOINT,
   MEDIA_ENDPOINT,
 } from './sourcePolicy.js';
+
 function safeNumber(value, fallback = NaN) {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
 }
+
 function frameUrlFor(camera, refreshMs = ACTIVE_FRAME_REFRESH_MS) {
   const cadenceMs = Math.max(
     1000,
@@ -25,9 +27,28 @@ function frameUrlFor(camera, refreshMs = ACTIVE_FRAME_REFRESH_MS) {
   });
   return `${FRAME_ENDPOINT}/${encodeURIComponent(camera.id)}?${params.toString()}`;
 }
+
 function mediaUrlFor(camera) {
   return `${MEDIA_ENDPOINT}/${encodeURIComponent(camera.id)}?ts=${Math.floor(Date.now() / 15000)}`;
 }
+
+/** Pick a smaller camera registry for mobile without changing provider data. */
+export function cctvCatalogPath({
+  width = globalThis.window?.innerWidth,
+  coarsePointer = Boolean(
+    globalThis.window?.matchMedia?.('(pointer: coarse)')?.matches ||
+      Number(globalThis.navigator?.maxTouchPoints) > 0,
+  ),
+  deviceMemory = globalThis.navigator?.deviceMemory,
+} = {}) {
+  const viewportWidth = Number(width);
+  const memory = Number(deviceMemory);
+  const mobile = coarsePointer || (Number.isFinite(viewportWidth) && viewportWidth <= 900);
+  if (!mobile) return '/api/cctv/sources';
+  const max = Number.isFinite(memory) && memory > 0 && memory <= 4 ? 600 : 900;
+  return `/api/cctv/sources?max=${max}`;
+}
+
 /** Supply catalog/health records and the existing registered camera URL families. */
 export function createCctvSource({
   fetchImpl = (...args) => globalThis.fetch(...args),
@@ -44,7 +65,7 @@ export function createCctvSource({
   }
   return {
     getCatalog(options) {
-      return read('/api/cctv/sources', 'sources', options);
+      return read(cctvCatalogPath(), 'sources', options);
     },
     getHealth(options) {
       return read('/api/cctv/health', 'cameras', options);
