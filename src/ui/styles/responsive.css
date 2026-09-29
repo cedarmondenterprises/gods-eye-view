@@ -185,10 +185,7 @@
     right: 16px;
     /* The rail goes edge-to-edge at this width, so its floor is what decides
        whether the required Google/Cesium credit line survives. */
-    bottom: max(
-      calc(2vh + 7.5rem),
-      calc(env(safe-area-inset-bottom) + 7rem)
-    );
+    bottom: max(calc(2vh + 7.5rem), calc(env(safe-area-inset-bottom) + 7rem));
     left: 16px;
     width: auto;
     max-height: none;
