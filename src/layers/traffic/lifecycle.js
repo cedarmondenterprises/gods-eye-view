@@ -6,6 +6,19 @@ import {
   releaseCameraSensitivity,
 } from '../../data/cameraSensitivity.js';
 
+/**
+ * Live TomTom road-flow mode has no synthetic moving vehicles, so once the
+ * old dot population is gone there is no per-frame traffic work left to do.
+ * Keyless/simulated traffic keeps the shipped continuous animator unchanged.
+ */
+export function trafficNeedsAnimation({
+  liveMode = false,
+  liveFlowOnly = false,
+  dotCount = 0,
+} = {}) {
+  return !liveMode || !liveFlowOnly || dotCount > 0;
+}
+
 export function createLifecycle({
   state: layerState,
   services,
@@ -14,6 +27,34 @@ export function createLifecycle({
 }) {
   const { holdContinuousRender, releaseContinuousRender } = services.render;
   const { resetFlowTileCache } = source;
+
+  function stopTrafficAnimation() {
+    layerState._preRenderRemover?.();
+    layerState._preRenderRemover = null;
+    releaseContinuousRender('traffic');
+    layerState._viewer?.scene?.requestRender?.();
+  }
+
+  function startTrafficAnimation(viewer = layerState._viewer) {
+    if (!viewer || layerState._preRenderRemover) return;
+    holdContinuousRender('traffic');
+    layerState._lastAnimTime = 0;
+    const animateOrSleep = () => {
+      if (
+        !trafficNeedsAnimation({
+          liveMode: layerState._liveMode,
+          liveFlowOnly: layerState._liveFlowOnly,
+          dotCount: layerState._dots.length,
+        })
+      ) {
+        stopTrafficAnimation();
+        return;
+      }
+      parts.animation.animate();
+    };
+    layerState._preRenderRemover =
+      viewer.scene.preRender.addEventListener(animateOrSleep);
+  }
 
   const methods = {
     /**
@@ -71,7 +112,7 @@ export function createLifecycle({
 
     /**
      * Enable the traffic layer. Shows the point collection, subscribes to the
-     * preRender animation loop and camera-change events, and kicks off an
+     * per-frame animator only while traffic actually moves, and kicks off an
      * initial viewport check.
      *
      * @param {Cesium.Viewer} viewer - The Cesium viewer instance.
@@ -81,13 +122,9 @@ export function createLifecycle({
       layerState._enabled = true;
       layerState._surfaceFrameRemover = observeTrafficSurface(viewer.scene);
       if (layerState._roadMode !== 'tomtom') source.prefetch?.();
-      holdContinuousRender('traffic'); // per-frame animator (perf wave 2)
-      layerState._lastAnimTime = 0;
       layerState._pointCollection.show = true;
+      startTrafficAnimation(viewer);
 
-      layerState._preRenderRemover = viewer.scene.preRender.addEventListener(
-        parts.animation.animate,
-      );
       if (TRAFFIC_TIMING_ENABLED) {
         parts.timing.clearTrafficTimingEntries();
         layerState._trafficTimingCurrentAnchor = null;
@@ -142,7 +179,7 @@ export function createLifecycle({
     disable(viewer) {
       layerState._enabled = false;
       services.credits?.hideOsmCredit?.(layerState._viewer, 'traffic');
-      releaseContinuousRender('traffic');
+      stopTrafficAnimation();
       clearTimeout(layerState._fetchTimeout);
       clearInterval(layerState._enableKickTimer);
       layerState._enableKickTimer = null;
@@ -163,10 +200,6 @@ export function createLifecycle({
 
       layerState._surfaceFrameRemover?.();
       layerState._surfaceFrameRemover = null;
-      if (layerState._preRenderRemover) {
-        layerState._preRenderRemover();
-        layerState._preRenderRemover = null;
-      }
       if (TRAFFIC_TIMING_ENABLED) {
         layerState._trafficTimingMoveEndRemover?.();
         layerState._trafficTimingMoveEndRemover = null;
