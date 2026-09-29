@@ -235,7 +235,8 @@ export function createGeometryQueue({
       }))
       .sort((a, b) => a.distKm - b.distKm)
       .map((entry) => entry.record);
-    const ordered = active && unique.includes(active) ? [active, ...pending] : pending;
+    const ordered =
+      active && unique.includes(active) ? [active, ...pending] : pending;
     const limit = runtimeCctvGeometryLimit();
     if (!Number.isFinite(limit) || ordered.length <= limit) return ordered;
     layerState._geoDeferredCount = Math.max(
@@ -309,7 +310,8 @@ export function createGeometryQueue({
    */
   function enqueueGeometryRefresh(records) {
     for (const record of rankedGeometryRecords(records)) {
-      if (!layerState._geoQueue.includes(record)) layerState._geoQueue.push(record);
+      if (!layerState._geoQueue.includes(record))
+        layerState._geoQueue.push(record);
     }
     if (!layerState._geoQueueTimer && layerState._geoQueue.length) {
       layerState._geoProgressNotifier = createGeometryProgressNotifier(
