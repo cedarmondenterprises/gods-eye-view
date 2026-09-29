@@ -1,0 +1,88 @@
+/* Mobile/NetHunter performance overrides. Keep the desktop visual treatment intact. */
+@media (max-width: 720px), (pointer: coarse) {
+  #cesiumContainer,
+  #cesiumContainer canvas {
+    overscroll-behavior: none;
+    touch-action: none;
+  }
+
+  /* Large backdrop-filter surfaces are expensive on tile-heavy mobile WebGL.
+     Retain the glass look with a much smaller blur and simpler shadow stack. */
+  #command-dock,
+  #control-panel,
+  #location-bar,
+  #gev-voice-control,
+  #data-panel,
+  #cctv-panel,
+  #scene-panel,
+  #pp-toggles,
+  #radio-panel,
+  #recent-imagery-panel,
+  #global-context-panel,
+  #weather-panel,
+  #provider-settings-panel {
+    backdrop-filter: blur(8px) saturate(1.08);
+    -webkit-backdrop-filter: blur(8px) saturate(1.08);
+    box-shadow:
+      0 6px 18px rgba(0, 0, 0, 0.42),
+      0 0 0 1px rgba(255, 255, 255, 0.025) inset;
+  }
+
+  .panel-glow {
+    opacity: 0.3;
+    filter: none;
+  }
+
+  button,
+  [role='button'],
+  input,
+  select,
+  .panel-header,
+  .panel-collapse {
+    touch-action: manipulation;
+  }
+
+  #left-panel-stack,
+  #right-context-rail,
+  .panel-scroll,
+  .cctv-list {
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+@media (max-width: 720px) {
+  #left-panel-stack {
+    top: max(70px, calc(env(safe-area-inset-top) + 54px));
+    right: max(12px, env(safe-area-inset-right));
+    left: max(12px, env(safe-area-inset-left));
+  }
+
+  #right-context-rail {
+    right: max(12px, env(safe-area-inset-right));
+    left: max(12px, env(safe-area-inset-left));
+  }
+
+  #command-dock {
+    bottom: max(8px, env(safe-area-inset-bottom));
+  }
+
+  #location-bar {
+    max-width: calc(
+      100vw - env(safe-area-inset-left) - env(safe-area-inset-right) - 24px
+    );
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #command-dock,
+  .panel,
+  .panel-glow,
+  .hud-corner,
+  .hud-top-bar,
+  .hud-bottom-bar {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
