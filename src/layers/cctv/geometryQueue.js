@@ -8,6 +8,53 @@ import {
   GEO_LOAD_BATCH_DELAY_MS,
 } from './policy.js';
 
+/**
+ * Mobile browsers do not need to eagerly ground every camera in a worldwide
+ * catalog. The closest records are refined first and any camera selected later
+ * still takes the normal explicit activation-time geometry pass.
+ */
+export function cctvEagerGeometryLimit({
+  width = Infinity,
+  coarsePointer = false,
+  touchPoints = 0,
+  deviceMemory = Infinity,
+  hardwareConcurrency = Infinity,
+} = {}) {
+  const viewportWidth = Number.isFinite(Number(width))
+    ? Number(width)
+    : Infinity;
+  const touches = Number.isFinite(Number(touchPoints))
+    ? Number(touchPoints)
+    : 0;
+  const memory = Number.isFinite(Number(deviceMemory))
+    ? Number(deviceMemory)
+    : Infinity;
+  const cores = Number.isFinite(Number(hardwareConcurrency))
+    ? Number(hardwareConcurrency)
+    : Infinity;
+  const mobile = Boolean(coarsePointer) || touches > 0 || viewportWidth <= 720;
+  if (!mobile) return Infinity;
+  return memory <= 4 || cores <= 4 ? 160 : 320;
+}
+
+function runtimeCctvGeometryLimit() {
+  if (typeof window === 'undefined') return Infinity;
+  const nav = window.navigator || globalThis.navigator || {};
+  let coarsePointer = false;
+  try {
+    coarsePointer = window.matchMedia?.('(pointer: coarse)')?.matches === true;
+  } catch {
+    coarsePointer = false;
+  }
+  return cctvEagerGeometryLimit({
+    width: window.innerWidth,
+    coarsePointer,
+    touchPoints: nav.maxTouchPoints,
+    deviceMemory: nav.deviceMemory,
+    hardwareConcurrency: nav.hardwareConcurrency,
+  });
+}
+
 export function createGeometryQueue({
   state: layerState,
   services,
@@ -119,11 +166,6 @@ export function createGeometryQueue({
    * Selects per-batch geometry-drain pacing from current camera ownership.
    * Called for every batch so releasing tracking immediately restores normal
    * throughput without restarting the queue.
-   *
-   * @param {Object} [ownership={}] Current camera-ownership state.
-   * @param {*} [ownership.trackedEntity] Cesium tracked entity, if any.
-   * @param {boolean} [ownership.cockpitActive] Whether cockpit owns the camera.
-   * @returns {{ batchSize: number, delayMs: number }} Drain pacing.
    */
 
   function cctvGeometryDrainPacing({
@@ -138,20 +180,6 @@ export function createGeometryQueue({
     }
     return { batchSize: GEO_LOAD_BATCH_SIZE, delayMs: GEO_LOAD_BATCH_DELAY_MS };
   }
-
-  /**
-   * Processes one tracking-aware geometry-drain batch. Ownership is read inside
-   * every call so a mid-drain tracking/cockpit transition changes the very next
-   * batch's size and delay.
-   *
-   * @param {Object} options Batch inputs.
-   * @param {Object[]} options.queue Mutable record queue.
-   * @param {() => Object} [options.readOwnership] Current camera ownership.
-   * @param {(record: Object) => void} options.visit Per-record geometry work.
-   * @param {() => void} options.progress Coalesced progress publication.
-   * @param {() => void} options.complete Unconditional completion publication.
-   * @returns {{ hasMore: boolean, batchSize: number, delayMs: number }} Batch result and pacing.
-   */
 
   function processCctvGeometryDrainBatch({
     queue,
@@ -171,13 +199,6 @@ export function createGeometryQueue({
     return { hasMore, ...pacing };
   }
 
-  /**
-   * Moves the current active record to the front of a live drain queue.
-   * @param {Object[]} queue Mutable geometry queue.
-   * @param {Object|null} activeRecord Current active CCTV record.
-   * @returns {boolean} Whether the queue order changed.
-   */
-
   function prioritizeActiveCctvGeometryRecord(queue, activeRecord) {
     if (!Array.isArray(queue) || !activeRecord) return false;
     const index = queue.indexOf(activeRecord);
@@ -187,12 +208,42 @@ export function createGeometryQueue({
     return true;
   }
 
-  /**
-   * Processes one batch (GEO_LOAD_BATCH_SIZE records) of the geometry queue:
-   * full ground-sampled coverage geometry per record, then yields back to the
-   * event loop before the next batch so tile rendering never stalls. When the
-   * initial-load pass completes it clears the loading flag and refreshes styles.
-   */
+  /** Rank records active-first and then nearest to the current camera. */
+  function rankedGeometryRecords(records) {
+    const unique = [...new Set(Array.isArray(records) ? records : [])].filter(
+      Boolean,
+    );
+    if (!unique.length) return [];
+    const active = parts.selection.getActiveRecord();
+    const carto = layerState._viewer?.camera?.positionCartographic;
+    const refLat = carto
+      ? Cesium.Math.toDegrees(carto.latitude)
+      : (active?.camera?.lat ?? 0);
+    const refLon = carto
+      ? Cesium.Math.toDegrees(carto.longitude)
+      : (active?.camera?.lon ?? 0);
+    const pending = unique
+      .filter((record) => record !== active)
+      .map((record) => ({
+        record,
+        distKm: parts.model.haversineKm(
+          refLat,
+          refLon,
+          record.camera.lat,
+          record.camera.lon,
+        ),
+      }))
+      .sort((a, b) => a.distKm - b.distKm)
+      .map((entry) => entry.record);
+    const ordered = active && unique.includes(active) ? [active, ...pending] : pending;
+    const limit = runtimeCctvGeometryLimit();
+    if (!Number.isFinite(limit) || ordered.length <= limit) return ordered;
+    layerState._geoDeferredCount = Math.max(
+      layerState._geoDeferredCount || 0,
+      ordered.length - limit,
+    );
+    return ordered.slice(0, limit);
+  }
 
   function processGeometryBatch() {
     layerState._geoQueueTimer = 0;
@@ -200,8 +251,6 @@ export function createGeometryQueue({
       stopGeometryLoadQueue();
       return;
     }
-    // Active-camera-first is re-established every batch because the operator
-    // can select a new camera while a long catalog drain is in flight.
     prioritizeActiveCctvGeometryRecord(
       layerState._geoQueue,
       parts.selection.getActiveRecord(),
@@ -238,14 +287,9 @@ export function createGeometryQueue({
           layerState._geoLoadDone = layerState._geoLoadTotal;
           if (layerState._enabled) {
             parts.rendering.refreshCoverageStyles();
-            // Geometry refinement may have replaced record.position objects — the
-            // one-shot drain completion re-anchors the card entries (event-driven,
-            // not a per-frame or timer pass).
             parts.cards.refreshAmbientCards();
           }
         }
-        // Completion is never coalesced: subscribers must observe the final
-        // loading state even if the last progress tick just happened.
         layerState._geoProgressNotifier?.finish();
         layerState._geoProgressNotifier = null;
       },
@@ -255,24 +299,17 @@ export function createGeometryQueue({
         processGeometryBatch,
         batchResult.delayMs,
       );
-      return;
     }
   }
 
   /**
-   * Appends records to the geometry queue (no progress tracking) and starts
-   * the batch timer if idle. Used by update()'s ONE-SHOT tiles-ready completion
-   * pass (records left `!groundResolved` by an enable-time drain that ran while
-   * tiles were still streaming) so it shares the same stagger machinery as the
-   * initial load. Fires at most once per enable — never on a recurring timer.
-   * @param {Object[]} records - Camera records needing geometry refresh.
+   * Appends a bounded, nearest-first record set to the geometry queue. The
+   * one-shot tiles-ready completion pass uses this too, so it cannot undo the
+   * mobile eager-work cap by re-queueing the entire worldwide catalog.
    */
-
   function enqueueGeometryRefresh(records) {
-    for (const record of records) {
-      if (!layerState._geoQueue.includes(record)) {
-        layerState._geoQueue.push(record);
-      }
+    for (const record of rankedGeometryRecords(records)) {
+      if (!layerState._geoQueue.includes(record)) layerState._geoQueue.push(record);
     }
     if (!layerState._geoQueueTimer && layerState._geoQueue.length) {
       layerState._geoProgressNotifier = createGeometryProgressNotifier(
@@ -283,48 +320,26 @@ export function createGeometryQueue({
   }
 
   /**
-   * Starts the initial staggered load: orders all records active-camera-first,
-   * then by distance from the current viewer position (nearest first, so
-   * cameras likely in view refine before off-screen ones), and exposes
-   * loaded/total progress through uiState()/getStats() while running.
+   * Starts the initial staggered load. Desktop keeps the complete catalog;
+   * mobile eagerly refines only the nearest bounded set. Cameras outside that
+   * set remain selectable and are refined immediately on explicit activation.
    */
-
   function startGeometryLoadQueue() {
     stopGeometryLoadQueue();
-    // Fresh drain → fresh one-shot completion pass: re-arm the tiles-ready
-    // latch so update() can complete any records this drain leaves unresolved.
     layerState._tilesReadyReenqueued = false;
+    layerState._geoDeferredCount = 0;
     if (!layerState._records.length) return;
-    const active = parts.selection.getActiveRecord();
-    const carto = layerState._viewer?.camera?.positionCartographic;
-    const refLat = carto
-      ? Cesium.Math.toDegrees(carto.latitude)
-      : (active?.camera.lat ?? 0);
-    const refLon = carto
-      ? Cesium.Math.toDegrees(carto.longitude)
-      : (active?.camera.lon ?? 0);
-    const pending = layerState._records
-      .filter((record) => record !== active)
-      .map((record) => ({
-        record,
-        distKm: parts.model.haversineKm(
-          refLat,
-          refLon,
-          record.camera.lat,
-          record.camera.lon,
-        ),
-      }))
-      .sort((a, b) => a.distKm - b.distKm)
-      .map((entry) => entry.record);
-    layerState._geoQueue = active ? [active, ...pending] : pending;
+    layerState._geoQueue = rankedGeometryRecords(layerState._records);
     layerState._geoLoadTotal = layerState._geoQueue.length;
     layerState._geoLoadDone = 0;
-    layerState._geoLoading = true;
+    layerState._geoLoading = layerState._geoQueue.length > 0;
+    if (!layerState._geoLoading) return;
     layerState._geoProgressNotifier = createGeometryProgressNotifier(
       parts.presentation.notifyListeners,
     );
     layerState._geoQueueTimer = setTimeout(processGeometryBatch, 0);
   }
+
   return {
     stopGeometryLoadQueue,
     createGeometryProgressNotifier,
