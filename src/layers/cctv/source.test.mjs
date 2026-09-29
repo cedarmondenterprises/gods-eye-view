@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createCctvSource, createCctvLayer } from './index.js';
+import { cctvCatalogLimit, cctvCatalogPath } from './source.js';
 
 const camera = {
   id: 'pack/camera ?x',
@@ -36,6 +37,19 @@ test('camera catalog and health use fixed source routes and caller cancellation'
     assert.equal(options.signal, controller.signal);
     assert.equal(options.cache, 'no-store');
   }
+});
+
+test('mobile camera catalog uses a bounded registry', () => {
+  assert.equal(cctvCatalogLimit({ width: 1440, coarsePointer: false }), null);
+  assert.equal(cctvCatalogLimit({ width: 390, coarsePointer: true }), 900);
+  assert.equal(
+    cctvCatalogLimit({ width: 390, coarsePointer: true, deviceMemory: 4 }),
+    600,
+  );
+  assert.equal(
+    cctvCatalogPath({ width: 390, coarsePointer: true }),
+    '/api/cctv/sources?max=900',
+  );
 });
 
 test('camera sources reject malformed snapshots and failures', async () => {
