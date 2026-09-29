@@ -69,7 +69,6 @@ export function createLifecycle({
       layerState._pointCollection = new Cesium.PointPrimitiveCollection({
         blendOption: Cesium.BlendOption.TRANSLUCENT,
       });
-      // Add permanently — toggle with .show to avoid destroy-on-remove errors
       viewer.scene.primitives.add(layerState._pointCollection);
       layerState._pointCollection.show = false;
       layerState._dots = [];
@@ -91,11 +90,6 @@ export function createLifecycle({
         layerState._trafficTimingDroppedTraces = 0;
       }
 
-      // Preset-aware dot styling: adopt the active post-FX style (persisted
-      // style restore may run before layer registration, so read the dataset)
-      // and follow StyleManager's gev:style-change event thereafter. Guarded
-      // for non-browser contexts; bound once per page (init survives layer
-      // destroy/re-register).
       if (typeof window !== 'undefined') {
         layerState._stylePreset =
           document?.documentElement?.dataset?.gevStyle || 'normal';
@@ -110,13 +104,7 @@ export function createLifecycle({
       console.log('[Data:Traffic] Initialized');
     },
 
-    /**
-     * Enable the traffic layer. Shows the point collection, subscribes to the
-     * per-frame animator only while traffic actually moves, and kicks off an
-     * initial viewport check.
-     *
-     * @param {Cesium.Viewer} viewer - The Cesium viewer instance.
-     */
+    /** Enable the traffic layer and subscribe to camera/animation work. */
     enable(viewer) {
       if (layerState._enabled) return;
       layerState._enabled = true;
@@ -135,24 +123,13 @@ export function createLifecycle({
           );
       }
 
-      // Share the 5% movement threshold with other camera-driven layers.
       viewer.camera.changed.addEventListener(parts.viewport.onCameraChanged);
-      // Always inspect the final view, even when the last flight step is below
-      // camera.changed's movement threshold.
       layerState._arrivalRemover = viewer.camera.moveEnd.addEventListener(() =>
         parts.viewport.onCameraChanged({ immediate: true }),
       );
       claimCameraSensitivity(viewer.camera, 'traffic', 0.05);
-
-      // Enabling is explicit intent, not a camera gesture that needs settling.
       parts.viewport.onCameraChanged({ immediate: true });
 
-      // Boot-order guard (field-test round 1: layer sat empty until the user
-      // moved): when the persisted layer state re-enables traffic during the
-      // intro flyTo, the initial check bails at high altitude — and a camera
-      // that then parks never re-fires camera.changed. Retry cheaply until the
-      // first load commits, then self-clear. Also acts as a safety kick if a
-      // failed first fetch left the viewport unloaded while parked.
       clearInterval(layerState._enableKickTimer);
       layerState._enableKickTimer = setInterval(() => {
         if (
@@ -170,12 +147,7 @@ export function createLifecycle({
       }, 1500);
     },
 
-    /**
-     * Disable the traffic layer. Cancels pending fetches, clears all dots,
-     * unsubscribes from events, and hides the point collection.
-     *
-     * @param {Cesium.Viewer} viewer - The Cesium viewer instance.
-     */
+    /** Disable the traffic layer and release all render/camera ownership. */
     disable(viewer) {
       layerState._enabled = false;
       services.credits?.hideOsmCredit?.(layerState._viewer, 'traffic');
@@ -192,10 +164,9 @@ export function createLifecycle({
       layerState._flowPending = 0;
       layerState._roadError = null;
       parts.animation.clearDots();
+      parts.rendering.removeHeatLines();
       layerState._lastBounds = null;
       layerState._lastViewCenter = null;
-      // A stale outage from the last session would misreport a fresh enable —
-      // the next load re-derives feed health from real evidence.
       layerState._flowError = null;
 
       layerState._surfaceFrameRemover?.();
@@ -216,19 +187,13 @@ export function createLifecycle({
       if (layerState._pointCollection) layerState._pointCollection.show = false;
     },
 
-    /**
-     * Permanently tear down the layer. Disables it, removes the point collection
-     * from the scene, and clears the tile cache.
-     *
-     * @param {Cesium.Viewer} viewer - The Cesium viewer instance.
-     */
+    /** Permanently tear down the layer. */
     destroy(viewer) {
       this.disable(viewer);
       if (layerState._pointCollection) {
         viewer.scene.primitives.remove(layerState._pointCollection);
         layerState._pointCollection = null;
       }
-      parts.rendering.removeHeatLines();
       layerState._tileCache.clear();
       resetFlowTileCache();
       layerState._count = 0;
