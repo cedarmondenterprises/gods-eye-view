@@ -42,7 +42,7 @@ function runtimeLiveFlowLineCap() {
     width: windowRef?.innerWidth,
     coarsePointer: Boolean(
       windowRef?.matchMedia?.('(pointer: coarse)')?.matches ||
-        Number(navigatorRef?.maxTouchPoints) > 0,
+      Number(navigatorRef?.maxTouchPoints) > 0,
     ),
     deviceMemory: navigatorRef?.deviceMemory,
   });
