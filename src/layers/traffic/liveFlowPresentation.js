@@ -20,7 +20,10 @@ function roadFlow(road) {
 
 function roadLength(road) {
   if (Array.isArray(road?.segmentDist) && road.segmentDist.length)
-    return road.segmentDist.reduce((sum, value) => sum + (Number(value) || 0), 0);
+    return road.segmentDist.reduce(
+      (sum, value) => sum + (Number(value) || 0),
+      0,
+    );
   return Array.isArray(road?.waypoints) ? road.waypoints.length : 0;
 }
 
@@ -74,7 +77,8 @@ export function installLiveFlowPresentation({ state, services, parts }) {
   const originalRemoveHeatLines = parts.rendering.removeHeatLines;
   const originalRecolorDots = parts.model.recolorDotsInPlace;
   const originalGetStats = parts.controls.methods.getStats;
-  const originalGetDetectableObjects = parts.controls.methods.getDetectableObjects;
+  const originalGetDetectableObjects =
+    parts.controls.methods.getDetectableObjects;
 
   function removeLiveFlowLines() {
     const primitives = state._viewer?.scene?.groundPrimitives;
@@ -102,12 +106,13 @@ export function installLiveFlowPresentation({ state, services, parts }) {
       const byBucket = BUCKET_PRIORITY[a.bucket] - BUCKET_PRIORITY[b.bucket];
       return byBucket || b.length - a.length;
     });
-    return candidates.slice(0, LIVE_FLOW_LINE_CAP);
+    return candidates;
   }
 
   function rebuildLiveFlowLines(roads) {
     removeLiveFlowLines();
     originalRemoveHeatLines();
+    services.credits?.hideOsmCredit?.(state._viewer, 'traffic');
 
     if (!state._liveMode || !state._viewer) return;
     const groundPrimitives = state._viewer.scene?.groundPrimitives;
@@ -124,9 +129,11 @@ export function installLiveFlowPresentation({ state, services, parts }) {
     }
     if (!state._liveFlowLineSupported) return;
 
-    const candidates = liveCandidates(roads);
+    const allCandidates = liveCandidates(roads);
+    const candidates = allCandidates.slice(0, LIVE_FLOW_LINE_CAP);
     const byBucket = { free: [], slow: [], jam: [] };
-    for (const candidate of candidates) byBucket[candidate.bucket].push(candidate);
+    for (const candidate of candidates)
+      byBucket[candidate.bucket].push(candidate);
 
     for (const bucket of ['free', 'slow', 'jam']) {
       if (!byBucket[bucket].length) continue;
@@ -141,11 +148,11 @@ export function installLiveFlowPresentation({ state, services, parts }) {
       );
       const baseColor =
         state._activeBucketColors?.[bucket] ||
-        ({
+        {
           free: Cesium.Color.fromCssColorString('#2ecc71'),
           slow: Cesium.Color.fromCssColorString('#f0b23e'),
           jam: Cesium.Color.fromCssColorString('#e05252'),
-        }[bucket]);
+        }[bucket];
       const primitive = groundPrimitives.add(
         new Cesium.GroundPolylinePrimitive({
           geometryInstances: instances,
@@ -168,7 +175,7 @@ export function installLiveFlowPresentation({ state, services, parts }) {
         openMapTiles: true,
       });
 
-    if ((roads?.length || 0) > LIVE_FLOW_LINE_CAP)
+    if (allCandidates.length > LIVE_FLOW_LINE_CAP)
       console.log(
         `[Data:Traffic] Live flow corridors capped at ${LIVE_FLOW_LINE_CAP} for mobile performance`,
       );
@@ -199,14 +206,15 @@ export function installLiveFlowPresentation({ state, services, parts }) {
   };
 
   parts.model.recolorDotsInPlace = function recolorOrRefreshLiveFlow(label) {
-    originalRecolorDots(label);
     if (state._liveMode && state._liveFlowOnly) {
       const roads = parts.rendering.visibleRoadsForAltitude(
         state._roads,
         state._lastRenderAltitude,
       );
       rebuildLiveFlowLines(roads);
+      return;
     }
+    originalRecolorDots(label);
   };
 
   parts.controls.methods.getDetectableObjects = function getHonestDetectables(
@@ -230,7 +238,10 @@ export function installLiveFlowPresentation({ state, services, parts }) {
     stats.syntheticVehiclesHidden = true;
 
     if (state._flowError) {
-      const reason = String(state._flowError).replace(/^SIMULATED\s*[—-]\s*/i, '');
+      const reason = String(state._flowError).replace(
+        /^SIMULATED\s*[—-]\s*/i,
+        '',
+      );
       stats.error = `LIVE FLOW UNAVAILABLE — ${reason}`;
       stats.loadingLabel = stats.error;
     } else if (!stats.error) {
