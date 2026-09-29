@@ -133,7 +133,6 @@ export function installLiveFlowPresentation({ state, services, parts }) {
   state._liveFlowLineSupported = null;
   state._liveFlowSignature = null;
   state._liveFlowLineCap = runtimeLiveFlowLineCap();
-  state._liveFlowAnimationSuspended = false;
 
   const originalRebuildHeatLines = parts.rendering.rebuildHeatLines;
   const originalRemoveHeatLines = parts.rendering.removeHeatLines;
@@ -141,29 +140,6 @@ export function installLiveFlowPresentation({ state, services, parts }) {
   const originalGetStats = parts.controls.methods.getStats;
   const originalGetDetectableObjects =
     parts.controls.methods.getDetectableObjects;
-
-  function suspendSyntheticAnimation() {
-    if (!state._liveMode || !state._liveFlowOnly || state._enabled === false)
-      return;
-    if (state._preRenderRemover) {
-      state._preRenderRemover();
-      state._preRenderRemover = null;
-    }
-    services.render?.releaseContinuousRender?.('traffic');
-    state._liveFlowAnimationSuspended = true;
-    services.render?.governorRequestRender?.('traffic-live-flow');
-  }
-
-  function ensureSyntheticAnimation() {
-    if (state._liveMode || !state._enabled || !state._viewer?.scene?.preRender)
-      return;
-    services.render?.holdContinuousRender?.('traffic');
-    if (!state._preRenderRemover)
-      state._preRenderRemover = state._viewer.scene.preRender.addEventListener(
-        parts.animation.animate,
-      );
-    state._liveFlowAnimationSuspended = false;
-  }
 
   function removeLiveFlowLines({ clearSignature = true } = {}) {
     const primitives = state._viewer?.scene?.groundPrimitives;
@@ -215,10 +191,7 @@ export function installLiveFlowPresentation({ state, services, parts }) {
     const lineCap = state._liveFlowLineCap || DESKTOP_FLOW_LINE_CAP;
     const candidates = allCandidates.slice(0, lineCap);
     const signature = candidateSignature(candidates, state);
-    if (signature === state._liveFlowSignature) {
-      suspendSyntheticAnimation();
-      return;
-    }
+    if (signature === state._liveFlowSignature) return;
 
     removeLiveFlowLines({ clearSignature: false });
     originalRemoveHeatLines();
@@ -274,7 +247,7 @@ export function installLiveFlowPresentation({ state, services, parts }) {
         `[Data:Traffic] Live flow corridors capped at ${lineCap} for this device`,
       );
 
-    suspendSyntheticAnimation();
+    services.render?.governorRequestRender?.('traffic-live-flow');
   }
 
   parts.rendering.removeHeatLines = function removeAllTrafficLines() {
@@ -296,7 +269,6 @@ export function installLiveFlowPresentation({ state, services, parts }) {
       rebuildLiveFlowLines(roads);
       return;
     }
-    ensureSyntheticAnimation();
     originalRecolorDots(label);
   };
 
