@@ -33,7 +33,7 @@ function mediaUrlFor(camera) {
 }
 
 /** Pick a smaller camera registry for mobile without changing provider data. */
-export function cctvCatalogPath({
+export function cctvCatalogLimit({
   width = globalThis.window?.innerWidth,
   coarsePointer = Boolean(
     globalThis.window?.matchMedia?.('(pointer: coarse)')?.matches ||
@@ -43,10 +43,15 @@ export function cctvCatalogPath({
 } = {}) {
   const viewportWidth = Number(width);
   const memory = Number(deviceMemory);
-  const mobile = coarsePointer || (Number.isFinite(viewportWidth) && viewportWidth <= 900);
-  if (!mobile) return '/api/cctv/sources';
-  const max = Number.isFinite(memory) && memory > 0 && memory <= 4 ? 600 : 900;
-  return `/api/cctv/sources?max=${max}`;
+  const mobile =
+    coarsePointer || (Number.isFinite(viewportWidth) && viewportWidth <= 900);
+  if (!mobile) return null;
+  return Number.isFinite(memory) && memory > 0 && memory <= 4 ? 600 : 900;
+}
+
+export function cctvCatalogPath(options) {
+  const max = cctvCatalogLimit(options);
+  return max ? `/api/cctv/sources?max=${max}` : '/api/cctv/sources';
 }
 
 /** Supply catalog/health records and the existing registered camera URL families. */
@@ -64,8 +69,14 @@ export function createCctvSource({
     return payload;
   }
   return {
-    getCatalog(options) {
-      return read(cctvCatalogPath(), 'sources', options);
+    async getCatalog(options) {
+      const max = cctvCatalogLimit();
+      const payload = await read(cctvCatalogPath(), 'sources', options);
+      // Older servers ignore the `max` query parameter. Slice client-side too
+      // so a phone never constructs thousands of billboard/geometry records.
+      if (max && payload.sources.length > max)
+        payload.sources = payload.sources.slice(0, max);
+      return payload;
     },
     getHealth(options) {
       return read('/api/cctv/health', 'cameras', options);
