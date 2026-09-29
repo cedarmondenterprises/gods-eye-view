@@ -5,6 +5,8 @@ const finitePositive = (value, fallback) => {
 
 /**
  * Pick a conservative Cesium render profile from browser capability hints.
+ * Cesium already uses browser-recommended CSS-pixel resolution by default, so
+ * mobile resolutionScale stays close to 1 rather than compensating for DPR.
  * The profile only changes rendering cost; it never changes data sources.
  */
 export function chooseViewerPerformanceProfile({
@@ -12,12 +14,10 @@ export function chooseViewerPerformanceProfile({
   coarsePointer = false,
   deviceMemory = Infinity,
   hardwareConcurrency = Infinity,
-  devicePixelRatio = 1,
 } = {}) {
   const viewportWidth = finitePositive(width, Infinity);
   const memory = finitePositive(deviceMemory, Infinity);
   const cores = finitePositive(hardwareConcurrency, Infinity);
-  const dpr = finitePositive(devicePixelRatio, 1);
   const mobile = Boolean(coarsePointer) || viewportWidth <= 900;
   const constrained = mobile && (memory <= 4 || cores <= 4);
 
@@ -32,19 +32,13 @@ export function chooseViewerPerformanceProfile({
     };
   }
 
-  const effectiveDprTarget = constrained ? 1.25 : 1.5;
-  const resolutionScale = Math.max(
-    constrained ? 0.5 : 0.55,
-    Math.min(1, effectiveDprTarget / dpr),
-  );
-
   return {
     name: constrained ? 'mobile-lite' : 'mobile',
     mobile: true,
     constrained,
     targetFrameRate: constrained ? 30 : 45,
     msaaSamples: constrained ? 1 : 2,
-    resolutionScale,
+    resolutionScale: constrained ? 0.7 : 0.85,
   };
 }
 
@@ -62,6 +56,5 @@ export function detectViewerPerformanceProfile({
     coarsePointer,
     deviceMemory: navigatorRef?.deviceMemory,
     hardwareConcurrency: navigatorRef?.hardwareConcurrency,
-    devicePixelRatio: windowRef?.devicePixelRatio,
   });
 }
