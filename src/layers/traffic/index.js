@@ -11,6 +11,7 @@ import { createControls } from './controls.js';
 import { createLifecycle } from './lifecycle.js';
 import { createRetention } from './retention.js';
 import { createState } from './state.js';
+import { installLiveFlowPresentation } from './liveFlowPresentation.js';
 
 /** Construct one layer with its own scene state and supplied application services. */
 export function createTrafficLayer({ services, source }) {
@@ -38,6 +39,7 @@ export function createTrafficLayer({ services, source }) {
   parts.rendering = createRendering(context);
   parts.controls = createControls(context);
   parts.lifecycle = createLifecycle(context);
+  parts.liveFlowPresentation = installLiveFlowPresentation(context);
   state._parseRoads = TRAFFIC_TIMING_ENABLED
     ? (data, trace) =>
         trace
